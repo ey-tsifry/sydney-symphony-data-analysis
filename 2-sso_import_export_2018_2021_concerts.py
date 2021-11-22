@@ -22,11 +22,13 @@ from sso_utilities import file_utils
 
 
 # %%
-def sso_import_concerts_by_year(year: int) -> List[NamedTuple]:
+def sso_import_concerts_by_year(year: int, concert_key_list: List[str] = []) -> List[NamedTuple]:
     """
     Return list of concert HTML file content for a specified year.
+    Can specify individual concerts by concert key name, or all concerts (default).
 
     :param year: Year
+    :param concert_key_list: (optional) List of concert keys (=names of concert HTML files)
     :return: List with concert HTML file content records
     """
     concert_record_list: List[NamedTuple] = []
@@ -34,13 +36,20 @@ def sso_import_concerts_by_year(year: int) -> List[NamedTuple]:
 
     # import existing HTML content from valid paths only
     year_str = str(year)
-    path = Path(os.path.join(year_str, "events"))
-    if not path.exists():
-        raise OSError(f"Path does not exist: {path.absolute()}")
+    event_path = Path(os.path.join(year_str, "events"))
+    if not event_path.exists():
+        raise OSError(f"Path does not exist: {event_path.absolute()}")
 
+    # check whether to import specific HTML files or all HTML files in the event path
     concert_obj = file_utils.ProcessHTML()
-    html_file_list = sorted(path.glob("*.html"))
+    if concert_key_list:
+        html_file_list = [
+            event_path.joinpath(f"{concert_key}.html") for concert_key in concert_key_list
+        ]
+    else:
+        html_file_list = sorted(event_path.glob("*.html"))
     print(f"\n{year_str}\n\nHTML file count: {len(html_file_list)}\n")
+
     for idx, html_file in enumerate(html_file_list):
         # Input: {year}/events/some-key.html
         print(f"[{idx+1}] loading {html_file}...")
@@ -129,6 +138,8 @@ def main():
     """."""
     # define a time period between 2018 and 2022
     YEAR_LIST: List[int] = [2022]
+    # (optional) define specific concert keys to import
+    CONCERT_KEY_LIST: List[str] = ["lior-compassion", "prokofievs-peter-wolf"]
     # specify whether to append records to an existing DB, or create a new DB
     APPEND_RECORDS = True
     # name of default SSO SQLite DB file (may or may not already exist)
@@ -148,7 +159,10 @@ def main():
     master_concert_list: List[NamedTuple] = []
     for year in YEAR_LIST:
         try:
-            concert_year_list = sso_import_concerts_by_year(year)
+            if CONCERT_KEY_LIST:
+                concert_year_list = sso_import_concerts_by_year(year, CONCERT_KEY_LIST)
+            else:
+                concert_year_list = sso_import_concerts_by_year(year)
         except OSError:
             raise
         else:
