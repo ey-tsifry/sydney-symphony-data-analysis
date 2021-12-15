@@ -9,18 +9,8 @@ from typing import Dict, List
 import pandas as pd
 from bs4 import BeautifulSoup
 from sqlalchemy import create_engine, exc, inspect
+from sqlalchemy.engine import Engine
 from sqlalchemy.types import Integer
-
-
-def _return_file_load_error_msg(filename: str):
-    """
-    Return common error message for a failed file load attempt.
-
-    :param filename: File name
-    :return: Error message string
-    """
-    error_msg = f"Failed to load {filename}"
-    return error_msg
 
 
 class ProcessCSV:
@@ -33,8 +23,8 @@ class ProcessCSV:
         :param file_params: File IO parameters, defaults to "r"
         :param from_encoding: Encoding, defaults to "utf-8"
         """
-        self.file_params = file_params
-        self.from_encoding = from_encoding
+        self.file_params: str = file_params
+        self.from_encoding: str = from_encoding
 
     def load_csv(self, filename: str) -> pd.DataFrame:
         """
@@ -45,10 +35,9 @@ class ProcessCSV:
         """
         try:
             with open(filename, self.file_params, encoding=self.from_encoding) as file:
-                csv_df = pd.read_csv(file, encoding=self.from_encoding)
-        except OSError:
-            print(_return_file_load_error_msg(filename))
-            raise
+                csv_df: pd.DataFrame = pd.read_csv(file, encoding=self.from_encoding)
+        except OSError as e:
+            raise e
         else:
             return csv_df
 
@@ -66,9 +55,9 @@ class ProcessHTML:
         :param bsoup_params: BeautifulSoup parameters, defaults to "html5lib"
         :param from_encoding: Encoding, defaults to "utf-8"
         """
-        self.file_params = file_params
-        self.bsoup_params = bsoup_params
-        self.from_encoding = from_encoding
+        self.file_params: str = file_params
+        self.bsoup_params: str = bsoup_params
+        self.from_encoding: str = from_encoding
 
     def load_html(self, filename: str) -> BeautifulSoup:
         """
@@ -79,10 +68,11 @@ class ProcessHTML:
         """
         try:
             with open(filename, self.file_params) as file:
-                html_soup = BeautifulSoup(file, self.bsoup_params, from_encoding=self.from_encoding)
-        except OSError:
-            print(_return_file_load_error_msg(filename))
-            raise
+                html_soup: BeautifulSoup = BeautifulSoup(
+                    file, self.bsoup_params, from_encoding=self.from_encoding
+                )
+        except OSError as e:
+            raise e
         else:
             return html_soup
 
@@ -96,8 +86,8 @@ class ProcessJSON:
         :param file_params: File IO parameters, defaults to "r"
         :param file_encoding: Encoding, defaults to "utf-8"
         """
-        self.file_params = file_params
-        self.encoding = file_encoding
+        self.file_params: str = file_params
+        self.encoding: str = file_encoding
 
     def load_json(self, filename: str) -> Dict:
         """
@@ -108,10 +98,9 @@ class ProcessJSON:
         """
         try:
             with open(filename, self.file_params, encoding=self.encoding) as file:
-                json_content = json.load(file)
-        except OSError:
-            print(_return_file_load_error_msg(filename))
-            raise
+                json_content: Dict = json.load(file)
+        except OSError as e:
+            raise e
         else:
             return json_content
 
@@ -124,7 +113,7 @@ class ProcessPickle:
 
         :param file_params: File IO parameters, defaults to "rb"
         """
-        self.file_params = file_params
+        self.file_params: str = file_params
 
     def load_pickle(self, filename: str) -> pd.DataFrame:
         """
@@ -135,10 +124,9 @@ class ProcessPickle:
         """
         try:
             with open(filename, self.file_params) as file:
-                pickle_df = pd.read_pickle(file)
-        except OSError:
-            print(_return_file_load_error_msg(filename))
-            raise
+                pickle_df: pd.DataFrame = pd.read_pickle(file)
+        except OSError as e:
+            raise e
         else:
             return pickle_df
 
@@ -154,8 +142,8 @@ class ProcessSQLite:
 
         :param db_name: SQLite database file name
         """
-        self.db_name = db_name
-        self.engine = create_engine(f"sqlite:///{db_name}", echo=False)
+        self.db_name: str = db_name
+        self.engine: Engine = create_engine(f"sqlite:///{db_name}", echo=False)
 
     def export_html_to_sqlite_db(self, sqlite_df: pd.DataFrame, append_flag: bool = False) -> None:
         """
@@ -169,7 +157,7 @@ class ProcessSQLite:
         # SQLAlchemy doesn't accept BeautifulSoup types by default
         sqlite_df["html_content"] = sqlite_df["html_content"].astype(str)
         # extract list of year(s)
-        year_list = sorted(set(sqlite_df["year"]))
+        year_list: List[str] = sorted(set(sqlite_df["year"]))
         try:
             # create backup copy of any existing DB file
             if os.path.exists(self.db_name):
@@ -184,20 +172,19 @@ class ProcessSQLite:
                     index=False,
                     if_exists="append" if append_flag else "fail",
                 )
-        except (KeyError, OSError, ValueError, exc.SQLAlchemyError):
-            print(f"Failed to export {self.db_name}")
-            raise
+        except (KeyError, OSError, ValueError, exc.SQLAlchemyError) as e:
+            raise e
         else:
             return
 
-    def get_sqlite_table_names(self) -> List[str]:
+    def _get_sqlite_table_names(self) -> List[str]:
         """
         Return list of SQLite DB table names.
 
         :return: List of table names
         """
         inspector = inspect(self.engine)
-        table_names = inspector.get_table_names()
+        table_names: List[str] = inspector.get_table_names()
         return table_names
 
     def load_sqlite_db(self) -> pd.DataFrame:
@@ -210,15 +197,14 @@ class ProcessSQLite:
         """
         master_df_list: List[pd.DataFrame] = []
         try:
-            for table_name in self.get_sqlite_table_names():
-                sql_df = pd.read_sql_table(table_name, con=self.engine)
+            for table_name in self._get_sqlite_table_names():
+                sql_df: pd.DataFrame = pd.read_sql_table(table_name, con=self.engine)
                 sql_df["html_content"] = sql_df["html_content"].apply(
                     lambda html_string: BeautifulSoup(html_string, "html5lib")
                 )
                 master_df_list.append(sql_df)
-        except (KeyError, OSError, ValueError):
-            print(_return_file_load_error_msg(self.db_name))
-            raise
+        except (KeyError, OSError, ValueError) as e:
+            raise e
         else:
             return reduce(lambda df1, df2: pd.concat([df1, df2]), master_df_list)
 
@@ -232,13 +218,12 @@ class ProcessSQLite:
         :return: Dataframe with SQLite DB query results for the specified year
         """
         try:
-            sql_df = pd.read_sql_table(str(year), con=self.engine)
+            sql_df: pd.DataFrame = pd.read_sql_table(str(year), con=self.engine)
             sql_df["html_content"] = sql_df["html_content"].apply(
                 lambda html_string: BeautifulSoup(html_string, "html5lib")
             )
-        except (KeyError, OSError, ValueError):
-            print(_return_file_load_error_msg(self.db_name))
-            raise
+        except (KeyError, OSError, ValueError) as e:
+            raise e
         else:
             return sql_df
 
@@ -255,9 +240,9 @@ class ProcessWikiXML:
         :param bsoup_params: BeautifulSoup parameters, defaults to "lxml"
         :param from_encoding: Encoding, defaults to "utf-8"
         """
-        self.file_params = file_params
-        self.bsoup_params = bsoup_params
-        self.from_encoding = from_encoding
+        self.file_params: str = file_params
+        self.bsoup_params: str = bsoup_params
+        self.from_encoding: str = from_encoding
 
     def load_xml(self, filename: str) -> BeautifulSoup:
         """
@@ -268,9 +253,10 @@ class ProcessWikiXML:
         """
         try:
             with open(filename, self.file_params) as file:
-                xml_soup = BeautifulSoup(file, self.bsoup_params, from_encoding=self.from_encoding)
-        except OSError:
-            print(_return_file_load_error_msg(filename))
-            raise
+                xml_soup: BeautifulSoup = BeautifulSoup(
+                    file, self.bsoup_params, from_encoding=self.from_encoding
+                )
+        except OSError as e:
+            raise e
         else:
             return xml_soup
