@@ -25,28 +25,9 @@ from typing import Dict, List, NamedTuple, Optional
 import pandas as pd
 from bs4.element import ResultSet
 
-from sso_utilities import file_utils
+from sso_utilities import common, file_utils
 
 # %%
-# earliest and latest years for which is there are full SSO season data sets
-EARLIEST_SSO_SEASON_YEAR: int = 2018
-LATEST_SSO_SEASON_YEAR: int = 2022
-
-# SSO seasons are from February-December
-SSO_SEASON_MONTHS: List[str] = [
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-]
-
 logger = logging.getLogger(__name__)
 
 
@@ -111,15 +92,19 @@ class SSOCalendar:
                 concert_key_record.keys.append(key)
         return concert_key_record
 
-    def _parse_html_calendar(self, month_list: List[str] = SSO_SEASON_MONTHS) -> List[NamedTuple]:
+    def _parse_html_calendar(
+        self, month_list: List[str] = common.SSO_SEASON_MONTHS
+    ) -> List[NamedTuple]:
         """
         Load and parse 2018-2020 SSO season calendar data for all months in a particular year.
 
         :param month_list: List of months in the SSO season
         :return: List of named tuples with all concert keys for the specified year
         """
-        if self.year < EARLIEST_SSO_SEASON_YEAR or self.year > 2020:
-            logger.error(f"Input year must be between {str(EARLIEST_SSO_SEASON_YEAR)} and 2020")
+        if self.year < common.EARLIEST_SSO_SEASON_YEAR or self.year > 2020:
+            logger.error(
+                f"Input year must be between {str(common.EARLIEST_SSO_SEASON_YEAR)} and 2020"
+            )
             raise ValueError
 
         html_concert_list: List[NamedTuple] = []
@@ -135,7 +120,7 @@ class SSOCalendar:
                     html_concert_list.append(html_concert)
         return html_concert_list
 
-    def _parse_json_calendar(self, latest_year: int = LATEST_SSO_SEASON_YEAR) -> NamedTuple:
+    def _parse_json_calendar(self, latest_year: int = common.LATEST_SSO_SEASON_YEAR) -> NamedTuple:
         """
         Load and parse post-2020 SSO season calendar from local JSON file.
 
@@ -289,26 +274,6 @@ def _get_cli_args() -> argparse.ArgumentParser:
 
 
 # %%
-def _validate_input_years(input_years: List[int]) -> bool:
-    """
-    Return whether input years are within the valid accepted range.
-
-    :param input_years: List of input years
-    :return: True if valid, False if not
-    """
-    if not input_years:
-        logger.error("List of input years is empty or invalid")
-        raise ValueError
-
-    min_year: int = min(input_years)
-    max_year: int = max(input_years)
-    if min_year < EARLIEST_SSO_SEASON_YEAR or max_year > LATEST_SSO_SEASON_YEAR:
-        return False
-    else:
-        return True
-
-
-# %%
 def main():
     """."""
     # set log level
@@ -317,19 +282,10 @@ def main():
     args: argparse.Namespace = _get_cli_args().parse_args()
     # check that input years are valid
     try:
-        years_valid: bool = _validate_input_years(args.input_years)
+        common.validate_sso_input_years(args.input_years)
     except ValueError as e:
+        logger.error(e)
         raise e
-    else:
-        if not years_valid:
-            error_msg = " ".join(
-                [
-                    "Input years are not within the expected time range:",
-                    f"{str(EARLIEST_SSO_SEASON_YEAR)} - {str(LATEST_SSO_SEASON_YEAR)}",
-                ]
-            )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
 
     # export concert keys for each requested SSO season to a separate CSV
     for year in args.input_years:
