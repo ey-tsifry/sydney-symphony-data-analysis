@@ -18,9 +18,11 @@ concert key naming scheme
 import argparse
 import logging
 import os
-from collections import namedtuple
+import shutil
+import tempfile
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List, NamedTuple, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 from bs4.element import ResultSet
@@ -28,35 +30,43 @@ from bs4.element import ResultSet
 from sso_utilities import common, file_utils
 
 # %%
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 # %%
+@dataclass
+class CalendarRecord:
+    """
+    Data class to store all calendar concert keys for a given year.
+    """
+
+    year: int
+    keys: List[str]
+
+
 class SSOCalendar:
     """Methods for extracting unique concert identifiers from SSO season calendar files."""
 
     def __init__(self, year: int) -> None:
         """
-        Initialise with year and template calendar record.
-
         :param year: A year between 2018 and the year of the latest published season
         """
-        self.year: int = year
-        self.calendar_record = namedtuple("calendar_record", "year keys")  # type: ignore
+        self.year = year
 
     @property
-    def html_calendar(self) -> List[NamedTuple]:
+    def html_calendar(self) -> List[CalendarRecord]:
         """Return concert keys extracted from calendar HTML files."""
         return self._parse_html_calendar()
 
     @property
-    def json_calendar(self) -> NamedTuple:
+    def json_calendar(self) -> CalendarRecord:
         """Return concert keys extracted from calendar JSON file."""
         return self._parse_json_calendar()
 
     def _parse_single_html_calendar_file(
         self, file_processor: file_utils.ProcessHTML, month: str
-    ) -> Optional[NamedTuple]:
+    ) -> Optional[CalendarRecord]:
         """
         Load and parse 2018-2020 SSO season calendar data for a single month from a local HTML file.
 
@@ -64,63 +74,75 @@ class SSOCalendar:
 
         :param file_processor: ProcessHTML object for help with loading HTML files
         :param month: Calendar month
-        :return: Named tuple with year and a list of related concert keys
+        :return: CalendarRecord with year and a list of related concert keys
         """
         year_str: str = str(self.year)
         html_file: str = os.path.join(year_str, f"sso_{year_str}_{month}.html")
-        logger.info(f"loading {html_file}...")
+        logger.info(f"[{year_str}] loading {html_file}...")
 
+        concerts: Optional[ResultSet] = None
         try:
-            concerts: ResultSet = file_processor.load_html(html_file).find_all(
+            concerts = file_processor.load_html(html_file).find_all(
                 class_="reveal calendar-perf-modal"
             )
         except OSError as e:
-            logger.error("Calendar HTML file failed to load")
+            logger.error(f"[{year_str}] Calendar HTML file failed to load: {e}")
             raise e
 
         if not concerts:
-            logger.info(f"Skipping {html_file} ... no concerts found to extract")
+            logger.info(f"[{year_str}] Skipping {html_file} ... no concerts found to extract")
             return None
 
-        # initialise calendar_record object with pre-filled year
-        concert_key_record = self.calendar_record(year=self.year, keys=[])
+        # initialise calendar record with pre-filled year
+        calendar_record: CalendarRecord = CalendarRecord(year=self.year, keys=[])
 
-        # add concert keys to the calendar_record.key list
+        # add concert keys to the calendar_record.keys list
         for row in concerts:
             key: str = row.find("a", attrs={"alt": "Read More"})["href"].strip().split("/")[-1]
-            if key not in concert_key_record.keys:
-                concert_key_record.keys.append(key)
-        return concert_key_record
+            if key not in calendar_record.keys:
+                calendar_record.keys.append(key)
+        return calendar_record
 
     def _parse_html_calendar(
         self, month_list: List[str] = common.SSO_SEASON_MONTHS
-    ) -> List[NamedTuple]:
+    ) -> List[CalendarRecord]:
         """
         Load and parse 2018-2020 SSO season calendar data for all months in a particular year.
 
         :param month_list: List of months in the SSO season
-        :return: List of named tuples with all concert keys for the specified year
+        :return: List of CalendarRecords with all concert keys for the specified year
         """
         if self.year < common.EARLIEST_SSO_SEASON_YEAR or self.year > 2020:
-            logger.error(
+            error_msg: str = (
                 f"Input year must be between {str(common.EARLIEST_SSO_SEASON_YEAR)} and 2020"
             )
-            raise ValueError
+            logger.error(error_msg)
+            raise ValueError(error_msg)
 
-        html_concert_list: List[NamedTuple] = []
+        html_concert_list: List[CalendarRecord] = []
         file_processor: file_utils.ProcessHTML = file_utils.ProcessHTML()
 
         for month in month_list:
+            html_concert: Optional[CalendarRecord] = None
             try:
                 html_concert = self._parse_single_html_calendar_file(file_processor, month)
-            except (OSError, ValueError) as e:
-                raise e
-            else:
-                if html_concert:
-                    html_concert_list.append(html_concert)
+            # fail entire process if a file fails to load or parse
+            # (one month could have a large # of concerts)
+            except OSError as os_error:
+                raise os_error
+            except ValueError as value_error:
+                logger.error(
+                    f"[{str(self.year)}] Error while parsing calendar HTML file: {value_error}"
+                )
+                raise value_error
+            # but don't fail if there were no actual concerts to extract from a file
+            if html_concert:
+                html_concert_list.append(html_concert)
         return html_concert_list
 
-    def _parse_json_calendar(self, latest_year: int = common.LATEST_SSO_SEASON_YEAR) -> NamedTuple:
+    def _parse_json_calendar(
+        self, latest_year: int = common.LATEST_SSO_SEASON_YEAR
+    ) -> CalendarRecord:
         """
         Load and parse post-2020 SSO season calendar from local JSON file.
 
@@ -130,37 +152,42 @@ class SSOCalendar:
         Example file: 2021/sso-concerts-2021.json
 
         :param latest_year: Latest SSO season (year)
-        :return: Named tuple with year and a list of related concert keys
+        :return: CalendarRecord with year and a list of related concert keys
         """
         if self.year < 2021 or self.year > latest_year:
-            logger.error(f"Input year must be between 2021 and {latest_year}")
-            raise ValueError
+            error_msg: str = f"Input year must be between 2021 and {latest_year}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
 
         year_str: str = str(self.year)
         json_file: str = os.path.join(year_str, f"sso-concerts-{year_str}.json")
-        logger.info(f"loading {json_file}...")
+        logger.info(f"[{year_str}] loading {json_file}...")
 
+        concerts: List[Dict[str, Any]] = []
         try:
             file_processor: file_utils.ProcessJSON = file_utils.ProcessJSON()
-            concerts: Dict = file_processor.load_json(json_file)["data"]
-        except (KeyError, OSError) as e:
-            logger.error("Calendar JSON failed to load or is missing a 'data' key")
-            raise e
+            concerts = file_processor.load_json(json_file)["data"]
+        except OSError as os_error:
+            logger.error(f"[{year_str}] Calendar JSON failed to load: {os_error}")
+            raise os_error
+        except KeyError as key_error:
+            logger.error(f"[{year_str}] Calendar JSON is missing a 'data' key: {key_error}")
+            raise key_error
 
+        # initialise calendar record with pre-filled year and no keys
+        calendar_record: CalendarRecord = CalendarRecord(year=self.year, keys=[])
         if not concerts:
-            logger.error(f"No concerts extracted from {json_file}")
-            raise ValueError
+            logger.info(f"[{year_str}] Skipping {json_file} ... no concerts found to extract")
+            return calendar_record
 
-        # initialise calendar_record object with pre-filled year
-        concert_key_record = self.calendar_record(year=self.year, keys=[])
-
-        # add concert keys to the calendar_record.key list
+        # add concert keys to the calendar_record.keys list
         for row in concerts:
-            if year_str in row["concertSeason"]:
-                key: str = row["url"].split("/")[-1].strip()
-                if key not in concert_key_record.keys:
-                    concert_key_record.keys.append(key)
-        return concert_key_record
+            if year_str in row.get("concertSeason", ""):
+                url: str = row.get("url", "")
+                key: str = url.split("/")[-1].strip() if url else ""
+                if key and key not in calendar_record.keys:
+                    calendar_record.keys.append(key)
+        return calendar_record
 
 
 # %%
@@ -169,67 +196,81 @@ def _create_sso_calendar_key_df(calendar_obj: SSOCalendar) -> pd.DataFrame:
     Return dataframe with SSO season concert keys.
 
     :param calendar_obj: SSOCalendar instance for a particular year
-    :param month_list: List of months in the SSO season
     :return: Dataframe with concert year and keys
     """
     if not calendar_obj.year:
-        logger.error("Calendar object is missing a year value")
-        raise ValueError
+        error_msg = "Calendar object is missing a year value"
+        logger.error(error_msg)
+        raise ValueError(error_msg)
 
-    concert_list: List[NamedTuple] = []
+    concert_list: List[CalendarRecord] = []
     if calendar_obj.year >= 2021:
+        json_calendar: Optional[CalendarRecord] = None
         try:
             json_calendar = calendar_obj.json_calendar
         except (KeyError, OSError, ValueError) as e:
             raise e
-        else:
+        if json_calendar and json_calendar.keys:
             concert_list.append(json_calendar)
     else:
+        html_calendar: List[CalendarRecord] = []
         try:
             html_calendar = calendar_obj.html_calendar
         except (OSError, ValueError) as e:
             raise e
-        else:
+        if html_calendar:
             concert_list.extend(html_calendar)
 
-    calendar_df: pd.DataFrame = pd.DataFrame(concert_list).explode("keys").drop_duplicates().dropna(
-        how="any"
-    ).reset_index(drop=True)
+    calendar_df: pd.DataFrame = pd.DataFrame(concert_list) if concert_list else pd.DataFrame()
+    if not calendar_df.empty:
+        calendar_df = (
+            calendar_df.explode("keys").drop_duplicates().dropna(how="any").reset_index(drop=True)
+        )
     return calendar_df
 
 
-def _export_sso_calendar_key_df(calendar_df: pd.DataFrame, export_csv_name: str) -> None:
+def _export_sso_calendar_key_df(calendar_df: pd.DataFrame, export_csv: str) -> None:
     """
     Return dataframe with SSO season concert keys.
 
     :param calendar_df: Dataframe with concert years and keys
-    :param export_csv_name: Name of export CSV file
+    :param export_csv: Name of export CSV file
     """
+    # write concert keys to a temp file first
+    tempfile.tempdir = os.path.curdir
+    csv_tempfile = tempfile.NamedTemporaryFile(delete=False)
     try:
-        if os.path.exists(export_csv_name):
-            old_file: str = (
-                os.path.splitext(export_csv_name)[0]
-                + f".{datetime.strftime(datetime.now(), '%Y%m%d')}.csv"
-            )
-            try:
-                os.rename(export_csv_name, old_file)
-            except OSError:
-                os.remove(old_file)
-                os.rename(export_csv_name, old_file)
-            logger.info(f"Found existing '{export_csv_name}'. Renamed to: {old_file}")
-        calendar_df["keys"].to_csv(path_or_buf=export_csv_name, index=False, header=False)
+        calendar_df["keys"].to_csv(path_or_buf=csv_tempfile, index=False, header=False)
     except (KeyError, OSError) as e:
         logger.error(
-            " ".join(
-                [
-                    "Failed to write to disk:",
-                    f"{os.path.abspath(export_csv_name)} ({len(calendar_df)} keys)",
-                ]
-            )
+            "Failed to write dataframe to temp file: "
+            f"{os.path.abspath(csv_tempfile.name)} ({len(calendar_df)} keys)"
         )
         raise e
-    else:
-        return
+    csv_tempfile.close()
+
+    # rename existing CSV if it exists
+    if os.path.exists(export_csv):
+        old_file: str = (
+            os.path.splitext(export_csv)[0] + f".{datetime.strftime(datetime.now(), '%Y%m%d')}.csv"
+        )
+        try:
+            os.rename(export_csv, old_file)
+        except OSError:
+            os.remove(old_file)
+            os.rename(export_csv, old_file)
+        logger.info(f"Found existing '{export_csv}'. Renamed to: {old_file}")
+
+    # move temp file to CSV
+    try:
+        shutil.move(csv_tempfile.name, export_csv)
+    except OSError as e:
+        logger.error(
+            f"Failed to copy {os.path.abspath(csv_tempfile.name)} to: "
+            f"{os.path.abspath(export_csv)} ({len(calendar_df)} keys)"
+        )
+        raise e
+    return None
 
 
 # %%
@@ -276,8 +317,6 @@ def _get_cli_args() -> argparse.ArgumentParser:
 # %%
 def main():
     """."""
-    # set log level
-    logging.basicConfig(level=logging.INFO)
     # get CLI args
     args: argparse.Namespace = _get_cli_args().parse_args()
     # check that input years are valid
@@ -293,25 +332,29 @@ def main():
         calendar: SSOCalendar = SSOCalendar(year)
         year_str: str = str(year)
         logger.info(f"Processing calendar files for {year_str}:")
-        calendar_df: pd.DataFrame = _create_sso_calendar_key_df(calendar)
+        calendar_df: pd.DataFrame = pd.DataFrame()
+        try:
+            calendar_df = _create_sso_calendar_key_df(calendar)
+        except (KeyError, OSError, ValueError) as e:
+            logger.warning(
+                f"[{year}] Skipping year because there was an error generating "
+                f"the calendar dataframe: {e}"
+            )
+            continue
         if calendar_df.empty:
-            error_msg = "Cannot export empty calendar dataframe"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
+            logger.info(f"[{year}] Skipping year because calendar dataframe is empty...")
+            continue
+
         # write season concert keys to disk
         try:
             out_file: str = os.path.join(year_str, f"{args.csv_prefix}_{year_str}_keys.csv")
             _export_sso_calendar_key_df(calendar_df, out_file)
         except OSError as e:
-            raise e
+            logger.error(f"[{year}] Error while trying to save concert key CSV: {e}")
         else:
             logger.info(
-                " ".join(
-                    [
-                        "Successfully wrote to disk:",
-                        f"{os.path.abspath(out_file)} ({len(calendar_df)} keys)",
-                    ]
-                )
+                f"[{year}] Successfully saved CSV: "
+                f"{os.path.abspath(out_file)} ({len(calendar_df)} keys)"
             )
 
 

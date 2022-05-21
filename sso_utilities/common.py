@@ -41,4 +41,4 @@ def validate_sso_input_years(input_years: List[int]) -> None:
         raise ValueError(f"Input years cannot be earlier than {EARLIEST_SSO_SEASON_YEAR}")
     if max_year > LATEST_SSO_SEASON_YEAR:
         raise ValueError(f"Input years cannot be later than {LATEST_SSO_SEASON_YEAR}")
-    return
+    return None
