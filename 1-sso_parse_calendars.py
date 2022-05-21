@@ -82,12 +82,12 @@ class SSOCalendar:
 
         concerts: Optional[ResultSet] = None
         try:
-            concerts = file_processor.load_html(html_file).find_all(
-                class_="reveal calendar-perf-modal"
-            )
+            html_content = file_processor.load_html(html_file)
         except OSError as e:
             logger.error(f"[{year_str}] Calendar HTML file failed to load: {e}")
             raise e
+        if html_content:
+            concerts = html_content.find_all(class_="reveal calendar-perf-modal")
 
         if not concerts:
             logger.info(f"[{year_str}] Skipping {html_file} ... no concerts found to extract")

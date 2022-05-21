@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+Utility methods for processing different file types.
+"""
 import json
 import os
 import shutil
 from functools import reduce
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 from bs4 import BeautifulSoup
@@ -20,8 +23,8 @@ class ProcessCSV:
         """
         Methods for processing CSV files.
 
-        :param file_params: File IO parameters, defaults to "r"
-        :param from_encoding: Encoding, defaults to "utf-8"
+        :param file_params: File IO parameters, default: "r"
+        :param from_encoding: Encoding, default: "utf-8"
         """
         self.file_params: str = file_params
         self.from_encoding: str = from_encoding
@@ -33,85 +36,70 @@ class ProcessCSV:
         :param filename: CSV file
         :return: Dataframe with CSV file content
         """
-        try:
-            with open(filename, self.file_params, encoding=self.from_encoding) as file:
-                csv_df: pd.DataFrame = pd.read_csv(file, encoding=self.from_encoding)
-        except OSError as e:
-            raise e
-        else:
-            return csv_df
+        csv_df: pd.DataFrame = pd.DataFrame()
+        with open(filename, self.file_params, encoding=self.from_encoding) as file:
+            csv_df = pd.read_csv(file, encoding=self.from_encoding)
+        return csv_df
 
 
 class ProcessHTML:
-    """Methods for processing HTML files."""
+    """Class with methods for processing HTML files."""
 
     def __init__(
         self, file_params: str = "rb", bsoup_params: str = "html5lib", from_encoding: str = "utf-8"
     ) -> None:
         """
-        Methods for processing HTML files.
-
-        :param file_params: File IO parameters, defaults to "rb"
-        :param bsoup_params: BeautifulSoup parameters, defaults to "html5lib"
-        :param from_encoding: Encoding, defaults to "utf-8"
+        :param file_params: File IO parameters, default: "rb"
+        :param bsoup_params: BeautifulSoup parameters, default: "html5lib"
+        :param from_encoding: Encoding, default: "utf-8"
         """
         self.file_params: str = file_params
         self.bsoup_params: str = bsoup_params
         self.from_encoding: str = from_encoding
 
-    def load_html(self, filename: str) -> BeautifulSoup:
+    def load_html(self, filename: str) -> Optional[BeautifulSoup]:
         """
         Load and process a local SSO HTML file.
 
         :param filename: HTML file
-        :return: BeautifulSoup object with HTML file content
+        :return: BeautifulSoup object with HTML file content, None if no content
         """
-        try:
-            with open(filename, self.file_params) as file:
-                html_soup: BeautifulSoup = BeautifulSoup(
-                    file, self.bsoup_params, from_encoding=self.from_encoding
-                )
-        except OSError as e:
-            raise e
-        else:
-            return html_soup
+        html_soup: Optional[BeautifulSoup] = None
+        with open(filename, self.file_params) as file:
+            html_soup = BeautifulSoup(file, self.bsoup_params, from_encoding=self.from_encoding)
+        return html_soup
 
 
 class ProcessJSON:
-    """Methods for processing JSON files."""
+    """Class with methods for processing JSON files."""
 
     def __init__(self, file_params: str = "r", file_encoding: str = "utf-8") -> None:
-        """Methods for processing JSON files.
-
-        :param file_params: File IO parameters, defaults to "r"
-        :param file_encoding: Encoding, defaults to "utf-8"
+        """
+        :param file_params: File IO parameters, default: "r"
+        :param file_encoding: Encoding, default: "utf-8"
         """
         self.file_params: str = file_params
         self.encoding: str = file_encoding
 
-    def load_json(self, filename: str) -> Dict:
+    def load_json(self, filename: str) -> Dict[str, Any]:
         """
         Load and process a local SSO JSON file.
 
         :param filename: JSON file
-        :return: Dictionary with JSON file content
+        :return: Dictionary with JSON file content, empty if no content
         """
-        try:
-            with open(filename, self.file_params, encoding=self.encoding) as file:
-                json_content: Dict = json.load(file)
-        except OSError as e:
-            raise e
-        else:
-            return json_content
+        json_content: Dict[str, Any] = {}
+        with open(filename, self.file_params, encoding=self.encoding) as file:
+            json_content = json.load(file)
+        return json_content
 
 
 class ProcessPickle:
-    """Methods for processing Pickle files."""
+    """Class with methods for processing Pickle files."""
 
     def __init__(self, file_params: str = "rb") -> None:
-        """Methods for processing Pickle files.
-
-        :param file_params: File IO parameters, defaults to "rb"
+        """
+        :param file_params: File IO parameters, default: "rb"
         """
         self.file_params: str = file_params
 
@@ -120,25 +108,20 @@ class ProcessPickle:
         Load and process a Pickle file.
 
         :param filename: Pickle file
-        :return: Dataframe with Pickle file content
+        :return: Dataframe with Pickle file content, empty if no content
         """
-        try:
-            with open(filename, self.file_params) as file:
-                pickle_df: pd.DataFrame = pd.read_pickle(file)
-        except OSError as e:
-            raise e
-        else:
-            return pickle_df
+        pickle_df: pd.DataFrame = pd.DataFrame()
+        with open(filename, self.file_params) as file:
+            pickle_df = pd.read_pickle(file)
+        return pickle_df
 
 
 class ProcessSQLite:
-    """Methods for processing SQLite databases."""
+    """Class with methods for processing SQLite databases."""
 
     def __init__(self, db_name: str) -> None:
         """
-        Methods for processing SQLite databases.
-
-        Database file will be created in local path if it doesn"t yet exist.
+        Database file will be created in local path if it doesn't yet exist.
 
         :param db_name: SQLite database file name
         """
@@ -153,6 +136,11 @@ class ProcessSQLite:
         :param append_flag: For an existing table, specify whether the SQLite engine should
                     append new rows or fail outright
         """
+        if sqlite_df.empty:
+            raise ValueError("HTML content dataframe is empty")
+        if sorted(sqlite_df.columns) != ["html_content", "year"]:
+            raise KeyError("HTML content dataframe is missing 'html_content' and/or 'year' columns")
+
         # convert HTML content from a BeautifulSoup object into a string since
         # SQLAlchemy doesn't accept BeautifulSoup types by default
         sqlite_df["html_content"] = sqlite_df["html_content"].astype(str)
@@ -174,10 +162,9 @@ class ProcessSQLite:
                 )
         except (KeyError, OSError, ValueError, exc.SQLAlchemyError) as e:
             raise e
-        else:
-            return
+        return None
 
-    def _get_sqlite_table_names(self) -> List[str]:
+    def _sqlite_table_names(self) -> List[str]:
         """
         Return list of SQLite DB table names.
 
@@ -193,11 +180,12 @@ class ProcessSQLite:
 
         Converts HTML content from a string back into a BeautifulSoup object.
 
-        :return: Dataframe with all SQLite DB data
+        :return: Dataframe with all SQLite DB data, empty if no results
         """
         master_df_list: List[pd.DataFrame] = []
+        reduced_df: pd.DataFrame = pd.DataFrame()
         try:
-            for table_name in self._get_sqlite_table_names():
+            for table_name in self._sqlite_table_names():
                 sql_df: pd.DataFrame = pd.read_sql_table(table_name, con=self.engine)
                 sql_df["html_content"] = sql_df["html_content"].apply(
                     lambda html_string: BeautifulSoup(html_string, "html5lib")
@@ -205,8 +193,9 @@ class ProcessSQLite:
                 master_df_list.append(sql_df)
         except (KeyError, OSError, ValueError) as e:
             raise e
-        else:
-            return reduce(lambda df1, df2: pd.concat([df1, df2]), master_df_list)
+        if master_df_list:
+            reduced_df = reduce(lambda df1, df2: pd.concat([df1, df2]), master_df_list)
+        return reduced_df
 
     def load_sqlite_db_by_year(self, year: int) -> pd.DataFrame:
         """
@@ -215,27 +204,26 @@ class ProcessSQLite:
         Converts HTML content from a string back into a BeautifulSoup object.
 
         :param year: Year on which to filter
-        :return: Dataframe with SQLite DB query results for the specified year
+        :return: Dataframe with SQLite DB query results for the specified year, empty if no results
         """
+        sql_df: pd.DataFrame = pd.DataFrame()
         try:
-            sql_df: pd.DataFrame = pd.read_sql_table(str(year), con=self.engine)
+            sql_df = pd.read_sql_table(str(year), con=self.engine)
             sql_df["html_content"] = sql_df["html_content"].apply(
                 lambda html_string: BeautifulSoup(html_string, "html5lib")
             )
         except (KeyError, OSError, ValueError) as e:
             raise e
-        else:
-            return sql_df
+        return sql_df
 
 
 class ProcessWikiXML:
-    """Methods for processing Wikipedia XML files."""
+    """Class with methods for processing Wikipedia XML files."""
 
     def __init__(
         self, file_params: str = "rb", bsoup_params: str = "lxml", from_encoding: str = "utf-8"
     ) -> None:
-        """Methods for processing Wikipedia XML files.
-
+        """
         :param file_params: File IO parameters, defaults to "rb"
         :param bsoup_params: BeautifulSoup parameters, defaults to "lxml"
         :param from_encoding: Encoding, defaults to "utf-8"
@@ -244,19 +232,14 @@ class ProcessWikiXML:
         self.bsoup_params: str = bsoup_params
         self.from_encoding: str = from_encoding
 
-    def load_xml(self, filename: str) -> BeautifulSoup:
+    def load_xml(self, filename: str) -> Optional[BeautifulSoup]:
         """
         Load and process a local Wikipedia XML file.
 
         :param filename: XML file
-        :return: BeautifulSoup object with XML file content
+        :return: BeautifulSoup object with XML file content, None if no content
         """
-        try:
-            with open(filename, self.file_params) as file:
-                xml_soup: BeautifulSoup = BeautifulSoup(
-                    file, self.bsoup_params, from_encoding=self.from_encoding
-                )
-        except OSError as e:
-            raise e
-        else:
-            return xml_soup
+        xml_soup: Optional[BeautifulSoup] = None
+        with open(filename, self.file_params) as file:
+            xml_soup = BeautifulSoup(file, self.bsoup_params, from_encoding=self.from_encoding)
+        return xml_soup
