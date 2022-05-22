@@ -138,7 +138,7 @@ class ProcessSQLite:
         """
         if sqlite_df.empty:
             raise ValueError("HTML content dataframe is empty")
-        if sorted(sqlite_df.columns) != ["html_content", "year"]:
+        if not any(column in sqlite_df.columns for column in ["html_content", "year"]):
             raise KeyError("HTML content dataframe is missing 'html_content' and/or 'year' columns")
 
         # convert HTML content from a BeautifulSoup object into a string since
