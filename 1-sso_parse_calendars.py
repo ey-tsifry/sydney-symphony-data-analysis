@@ -137,6 +137,9 @@ class CalendarJsonProcessor:
         except OSError as e:
             logger.error(f"[{str(self.season_year)}] Calendar JSON failed to load: {e}")
             raise e
+        else:
+            old_json_content = self.filter_season_data(old_json_content)
+            new_json_content = self.filter_season_data(new_json_content)
 
         logger.info(
             f"Old JSON: {len(old_json_content['data'])} concerts, "
