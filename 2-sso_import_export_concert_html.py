@@ -284,12 +284,12 @@ def main():
     # set SQLite DB file name
     db_name: str = ""
     try:
-        _validate_sqlite_db_filepath(args.db_file_name, args.append_records)
         db_name = (
             args.db_file_name
             if args.append_records
             else _sqlite_db_file_name(args.input_years, args.db_prefix)
         )
+        _validate_sqlite_db_filepath(db_name, args.append_records)
     except OSError as e:
         logger.error(f"There was an error while trying to set the DB name: {e}")
         raise e
