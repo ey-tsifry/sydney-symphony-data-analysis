@@ -15,6 +15,8 @@ from sqlalchemy import create_engine, exc, inspect
 from sqlalchemy.engine import Engine
 from sqlalchemy.types import Integer
 
+from data_models.sqlite_db import DBRecord
+
 
 class ProcessCSV:
     """Methods for processing CSV files."""
@@ -119,6 +121,9 @@ class ProcessPickle:
 class ProcessSQLite:
     """Class with methods for processing SQLite databases."""
 
+    HTML_CONTENT_FIELD: str = DBRecord.__fields__["html_content"].name
+    YEAR_FIELD: str = DBRecord.__fields__["year"].name
+
     def __init__(self, db_name: str) -> None:
         """
         Database file will be created in local path if it doesn't yet exist.
@@ -138,14 +143,19 @@ class ProcessSQLite:
         """
         if sqlite_df.empty:
             raise ValueError("HTML content dataframe is empty")
-        if not any(column in sqlite_df.columns for column in ["html_content", "year"]):
-            raise KeyError("HTML content dataframe is missing 'html_content' and/or 'year' columns")
+        if not any(
+            column in sqlite_df.columns for column in [self.HTML_CONTENT_FIELD, self.YEAR_FIELD]
+        ):
+            raise KeyError(
+                "HTML content dataframe is missing "
+                f"'{self.HTML_CONTENT_FIELD}' and/or '{self.YEAR_FIELD}' columns"
+            )
 
         # convert HTML content from a BeautifulSoup object into a string since
         # SQLAlchemy doesn't accept BeautifulSoup types by default
-        sqlite_df["html_content"] = sqlite_df["html_content"].astype(str)
+        sqlite_df[self.HTML_CONTENT_FIELD] = sqlite_df[self.HTML_CONTENT_FIELD].astype(str)
         # extract list of year(s)
-        year_list: List[str] = sorted(set(sqlite_df["year"]))
+        year_list: List[str] = sorted(set(sqlite_df[self.YEAR_FIELD]))
         try:
             # create backup copy of any existing DB file
             if os.path.exists(self.db_name):
@@ -153,10 +163,10 @@ class ProcessSQLite:
             # create one table for each year
             # if append_flag=True, records will be appended to any existing tables
             for year in year_list:
-                sqlite_df.loc[sqlite_df["year"] == year].to_sql(
+                sqlite_df.loc[sqlite_df[self.YEAR_FIELD] == year].to_sql(
                     str(year),
                     con=self.engine,
-                    dtype={"year": Integer()},
+                    dtype={self.YEAR_FIELD: Integer()},
                     index=False,
                     if_exists="append" if append_flag else "fail",
                 )
@@ -187,7 +197,7 @@ class ProcessSQLite:
         try:
             for table_name in self._sqlite_table_names():
                 sql_df: pd.DataFrame = pd.read_sql_table(table_name, con=self.engine)
-                sql_df["html_content"] = sql_df["html_content"].apply(
+                sql_df[self.HTML_CONTENT_FIELD] = sql_df[self.HTML_CONTENT_FIELD].apply(
                     lambda html_string: BeautifulSoup(html_string, "html5lib")
                 )
                 master_df_list.append(sql_df)
@@ -209,7 +219,7 @@ class ProcessSQLite:
         sql_df: pd.DataFrame = pd.DataFrame()
         try:
             sql_df = pd.read_sql_table(str(year), con=self.engine)
-            sql_df["html_content"] = sql_df["html_content"].apply(
+            sql_df[self.HTML_CONTENT_FIELD] = sql_df[self.HTML_CONTENT_FIELD].apply(
                 lambda html_string: BeautifulSoup(html_string, "html5lib")
             )
         except (KeyError, OSError, ValueError) as e:
