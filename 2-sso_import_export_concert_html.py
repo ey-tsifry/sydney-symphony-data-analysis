@@ -14,20 +14,22 @@ import argparse
 import logging
 import os
 from pathlib import Path
-from typing import Dict, List
+from typing import List, Optional
 
 import pandas as pd
+from pydantic import ValidationError
 from sqlalchemy import exc
 
 from data_models.sqlite_db import DBRecord
 from sso_utilities import common, file_utils
 
 # %%
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 # %%
-def sso_import_concerts_by_year(year: int, concert_key_list: List[str] = []) -> List[DBRecord]:
+def import_concerts_by_year(year: int, concert_key_list: List[str] = []) -> List[DBRecord]:
     """
     Return list of concert HTML file content for a specified year.
     Can specify individual concerts by concert key name, or all concerts (default).
@@ -42,7 +44,7 @@ def sso_import_concerts_by_year(year: int, concert_key_list: List[str] = []) -> 
     year_str: str = str(year)
     event_path: Path = Path(os.path.join(year_str, "events"))
     if not event_path.exists():
-        raise OSError(f"Events directory does not exist: {event_path.absolute()}")
+        raise OSError(f"[{year_str}] Events directory does not exist: {event_path.absolute()}")
 
     # check whether to import specific HTML files or all HTML files in the event path
     file_processor: file_utils.ProcessHTML = file_utils.ProcessHTML()
@@ -52,52 +54,79 @@ def sso_import_concerts_by_year(year: int, concert_key_list: List[str] = []) -> 
         ]
     else:
         html_file_list = sorted(event_path.glob("*.html"))
-    logger.info("\n\n".join([year_str, f"Requested HTML file count: {len(html_file_list)}"]))
+    logger.info(f"{year_str}\n\n" f"Requested HTML file count: {len(html_file_list)}")
 
     for idx, html_file in enumerate(html_file_list):
         # Input: {year}/events/some-key.html
-        logger.info(f"[{idx + 1}] loading {html_file}...")
+        logger.info(f"[{year_str}][{idx + 1}] loading {html_file}...")
+        concert_record: Optional[DBRecord] = None
         try:
-            concert_record: DBRecord = DBRecord(
-                year,  # year
-                html_file.name.split(".")[0],  # key
-                str(file_processor.load_html(str(html_file)).contents[-1]),  # html_content
-            )
-        # we currently fail the entire process if any file fails to load
-        # this prevents importing an imcomplete set of files into the DB
-        except OSError as e:
+            concert_record = _import_single_concert(file_processor, year, html_file)
+        # we currently fail the entire process for if any file fails to load or has no content
+        # this prevents importing an imcomplete set of files for a particular year into the DB
+        except (OSError, ValidationError) as e:
             raise e
-        else:
-            concert_record_list.append(concert_record)
+        if not concert_record:
+            raise ValueError(f"[{year_str}] No concert data loaded from {html_file}")
+
+        concert_record_list.append(concert_record)
     return concert_record_list
 
 
-def _sso_create_concert_detail_df(concert_record_list: List[DBRecord]) -> pd.DataFrame:
+def _import_single_concert(
+    file_processor: file_utils.ProcessHTML, year: int, concert_html: Path
+) -> Optional[DBRecord]:
+    """
+    Import content from a single concert HTML file.
+
+    :param file_processor: ProcessHTML object for help with loading HTML files
+    :param year: Year
+    :param concert_html: Path object representing a concert HTML file
+    :return: DBRecord with single concert metadata and HTML content, None if no content
+    """
+    concert_record: Optional[DBRecord] = None
+    html_content = None
+    try:
+        html_content = file_processor.load_html(str(concert_html))
+    except OSError as e:
+        raise e
+
+    if html_content:
+        concert_record = DBRecord(
+            year=year,
+            key=concert_html.name.split(".")[0],
+            html_content=str(html_content.contents[-1]),
+        )
+    return concert_record
+
+
+def _create_concert_detail_df(concert_record_list: List[DBRecord]) -> pd.DataFrame:
     """
     Return DataFrame of HTML file content for a list of SSO concerts.
 
-    :param year: List with concert HTML file content records
+    :param year: List with concert HTML file content DB records
     :return: Dataframe with concert HTML file content records
     """
-    if not concert_record_list:
-        raise ValueError("Concert record list is empty")
-    concert_df: pd.DataFrame = pd.DataFrame(concert_record_list)
+    concert_df: pd.DataFrame = pd.DataFrame(
+        [concert.dict() for concert in concert_record_list]
+    ) if concert_record_list else pd.DataFrame()
     return concert_df
 
 
 # %%
-def _sso_set_sqlite_db_filename(
-    start_year: int, end_year: int, db_file_prefix: str, append_flag: bool = False
-) -> str:
+def _sqlite_db_file_name(input_years: List[int], db_file_prefix: str) -> str:
     """
-    Return SSO SQLite DB filename, depending on inputs.
+    Return SSO SQLite DB file name, depending on inputs.
 
-    :param start_year: First year for which to import concert HTML file content
-    :param end_year: Last year for which to import concert HTML file content
-    :param db_file_prefix: SQLite DB filename prefix
-    :param append_flag: Specify whether or not new records are being appended to an existing DB
-                        table. If append_flag=False, then a new DB file will be created.
+    :param input_years: List of years for which to import concert HTML file content
+    :param db_file_prefix: SQLite DB file name prefix
+    :return: SQLite DB file name
     """
+    # first year for which to import concert files
+    start_year: int = min(input_years)
+    # last year for which to import concert files
+    end_year: int = max(input_years)
+
     db_name: str = ""
     if (
         db_file_prefix == "sso"
@@ -106,40 +135,50 @@ def _sso_set_sqlite_db_filename(
     ):
         db_name = common.DEFAULT_SQLITE_DB
     else:
-        db_file_suffix: str = f"_html_{end_year}" if start_year == end_year else f"_html_{start_year}_{end_year}"
-        db_name = f"{db_file_prefix}{db_file_suffix}.db"
-
-    # if append_flag=True, verify that the DB file path exists
-    if append_flag:
-        if not os.path.exists(db_name):
-            raise OSError(f"{db_name} does not exist, cannot append records to anything")
-    # if append_flag=False, raise an error if the DB file path exists
-    else:
-        if os.path.exists(db_name):
-            raise OSError(f"{db_name} already exists, will not overwrite")
+        db_file_suffix: str = (
+            f"html_{end_year}" if start_year == end_year else f"html_{start_year}_{end_year}"
+        )
+        db_name = f"{db_file_prefix}_{db_file_suffix}.db"
     return db_name
 
 
-def _sso_export_sqlite_html_db(
+def _validate_sqlite_db_filepath(db_file_name: str, append_flag: bool = False) -> None:
+    """
+    Validate SQLite DB file path, depending on the value of append_flag.
+
+    :param db_file_name: SQLite DB file name
+    :param append_flag: Specify whether or not new records are being appended to an existing DB
+                        table. If append_flag=False, then a new DB file will be created.
+    :return: None if path validation checks passed
+    """
+    # if append_flag=True, verify that the DB file path exists
+    if append_flag:
+        if not os.path.exists(db_file_name):
+            raise OSError(f"{db_file_name} does not exist, cannot append records to anything")
+    # if append_flag=False, raise an error if the DB file path exists
+    else:
+        if os.path.exists(db_file_name):
+            raise OSError(f"{db_file_name} already exists, will not overwrite")
+    return None
+
+
+def _export_sqlite_html_db(
     db_name: str, concert_df: pd.DataFrame, append_flag: bool = False
 ) -> None:
     """
     Export Dataframe of SSO HTML file content to the specified SQLite DB.
 
-    :param db_name: SQLite DB filename
+    :param db_name: SQLite DB file name
     :param concert_df: Dataframe with concert HTML file content records
     :param append_flag: For an existing table, specify whether the SQLite engine should
                     append new rows or fail outright
     """
-    if concert_df.empty:
-        raise ValueError("No data to export")
     try:
         sqlite_processor = file_utils.ProcessSQLite(db_name)
         sqlite_processor.export_html_to_sqlite_db(concert_df, append_flag)
-    except (KeyError, exc.SQLAlchemyError) as e:
+    except (KeyError, OSError, ValueError, exc.SQLAlchemyError) as e:
         raise e
-    else:
-        return
+    return None
 
 
 # %%
@@ -190,7 +229,7 @@ def _get_cli_args() -> argparse.ArgumentParser:
         "--db-prefix",
         type=str,
         default="sso",
-        help="(optional) Specify custom SQLite DB filename prefix (default: 'sso'). Example: test",
+        help="(optional) Specify custom SQLite DB file name prefix (default: 'sso'). Example: test",
     )
     parser.add_argument(
         "-a",
@@ -204,6 +243,11 @@ def _get_cli_args() -> argparse.ArgumentParser:
                 "Default: False",
             ]
         ),
+    )
+    parser.add_argument(
+        "--db-file-name",
+        type=str,
+        help="(required if append=True) Specify existing SQLite DB file name to append records to",
     )
     parser.add_argument(
         "-d",
@@ -224,8 +268,6 @@ def _get_cli_args() -> argparse.ArgumentParser:
 # %%
 def main():
     """."""
-    # set log level
-    logging.basicConfig(level=logging.INFO)
     # get CLI args
     args: argparse.Namespace = _get_cli_args().parse_args()
     # check that input years are valid
@@ -235,74 +277,77 @@ def main():
         logger.error(e)
         raise e
 
+    # validate that args.db_file_name exists if args.append_records=True
+    if args.append_records and not args.db_file_name:
+        raise ValueError("Must provide a SQLite DB file name when append=True")
+
     # set SQLite DB file name
-    start_year: int = min(args.input_years)
-    end_year: int = max(args.input_years)
+    db_name: str = ""
     try:
-        db_name: str = _sso_set_sqlite_db_filename(
-            start_year, end_year, args.db_prefix, args.append_records
+        _validate_sqlite_db_filepath(args.db_file_name, args.append_records)
+        db_name = (
+            args.db_file_name
+            if args.append_records
+            else _sqlite_db_file_name(args.input_years, args.db_prefix)
         )
     except OSError as e:
         logger.error(f"There was an error while trying to set the DB name: {e}")
         raise e
 
     if not db_name:
-        error_msg = "Invalid SQLite DB filename"
+        error_msg = "Invalid SQLite DB file name"
         logger.error(error_msg)
         raise ValueError(error_msg)
 
     # import concert HTML file content
     master_concert_list: List[DBRecord] = []
     for year in args.input_years:
+        concert_year_list: List[DBRecord] = []
         try:
             if args.concert_keys:
-                concert_year_list = sso_import_concerts_by_year(year, args.concert_keys)
+                concert_year_list = import_concerts_by_year(year, args.concert_keys)
             else:
-                concert_year_list = sso_import_concerts_by_year(year)
-        except OSError as e:
-            logger.error(f"There was an error while trying to import concert HTML files: {e}")
+                concert_year_list = import_concerts_by_year(year)
+        except (OSError, ValidationError, ValueError) as e:
+            logger.error(f"Error while trying to import concert HTML files: {e}")
             raise e
-        else:
+        if concert_year_list:
             master_concert_list.extend(concert_year_list)
 
     # extract concert keys and HTML content to a dataframe
+    concert_df: pd.DataFrame = pd.DataFrame()
     try:
-        concert_df: pd.DataFrame = _sso_create_concert_detail_df(master_concert_list)
+        concert_df = _create_concert_detail_df(master_concert_list)
     except (KeyError, ValueError) as e:
-        logger.error(f"There was an error while creating the concert HTML dataframe: {e}")
+        logger.error(f"Error while creating the concert HTML dataframe: {e}")
         raise e
+
+    if concert_df.empty:
+        logger.warn(f"Concert HTML dataframe is empty. Not exporting anything")
+        return None
 
     # if dry_run=True, just output keys for the concert records that would have been exported
     if args.dry_run:
-        db_field_map: Dict = DBRecord.fields()
-        db_year: str = db_field_map["year"]
-        db_key: str = db_field_map["key"]
-        year_key_pairs = [f"{row[db_year]}|{row[db_key]}" for _, row in concert_df.iterrows()]
+        db_year: str = DBRecord.__fields__["year"].name
+        db_key: str = DBRecord.__fields__["key"].name
+        year_key_pairs: List[str] = concert_df[[db_year, db_key]].apply(
+            lambda row: f"{row[db_year]}|{row[db_key]}", axis=1
+        ).to_list()
         logger.info(
-            " ".join(
-                [
-                    f"[DRY RUN] Would have exported {len(year_key_pairs)} concert HTML records.",
-                    "Concert year-key pairs:\n",
-                    ", ".join(year_key_pairs),
-                ]
-            )
+            f"[DRY RUN] Would have exported {len(year_key_pairs)} concert HTML records. "
+            f"Concert year-key pairs:\n"
+            f"{', '.join(year_key_pairs)}"
         )
     # if dry_run=False, export dataframe to designated SQLite DB
     else:
         try:
-            _sso_export_sqlite_html_db(db_name, concert_df, args.append_records)
-        except (KeyError, ValueError, exc.SQLAlchemyError) as e:
+            _export_sqlite_html_db(db_name, concert_df, args.append_records)
+        except (KeyError, OSError, ValueError, exc.SQLAlchemyError) as e:
             logger.error(
-                " ".join(
-                    [
-                        "There was an error while trying to export the concert HTML content",
-                        f"to SQLite DB: {e}",
-                    ]
-                )
+                "Error while trying to export the concert HTML content " f"to SQLite DB: {e}"
             )
             raise e
-        else:
-            logger.info(f"Successfully exported HTML content to {os.path.abspath(db_name)}")
+        logger.info(f"Successfully exported HTML content to {os.path.abspath(db_name)}")
 
 
 # %%
