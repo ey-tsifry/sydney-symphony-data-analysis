@@ -6,7 +6,7 @@ Utility methods for processing different file types.
 import json
 import os
 import shutil
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import pandas as pd
 import yaml
@@ -257,20 +257,20 @@ class ProcessYAML:
 
     def __init__(self, file_params: str = "r", file_encoding: str = "utf-8") -> None:
         """
-        :param file_params: File IO parameters, defaults to "rb"
+        :param file_params: File IO parameters, defaults to "r"
         :param file_encoding: Encoding, defaults to "utf-8"
         """
         self.file_params: str = file_params
         self.encoding: str = file_encoding
 
-    def load_yaml(self, filename: str) -> Dict[str, Any]:
+    def load_yaml(self, filename: str) -> Dict[Union[int, str], Any]:
         """
         Load and process a YAML file.
 
         :param filename: YAML file
         :return: Dictionary with YAML file content, empty if no content
         """
-        yaml_content: Dict[str, Any] = {}
+        yaml_content:  Dict[Union[int, str], Any] = {}
         with open(filename, self.file_params, encoding=self.encoding) as file:
             yaml_content = yaml.safe_load(file)
         return yaml_content
