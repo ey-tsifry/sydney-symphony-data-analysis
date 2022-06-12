@@ -6,10 +6,10 @@ Utility methods for processing different file types.
 import json
 import os
 import shutil
-from functools import reduce
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
+import yaml
 from bs4 import BeautifulSoup
 from sqlalchemy import create_engine, exc, inspect
 from sqlalchemy.engine import Engine
@@ -192,20 +192,17 @@ class ProcessSQLite:
 
         :return: Dataframe with all SQLite DB data, empty if no results
         """
-        master_df_list: List[pd.DataFrame] = []
-        reduced_df: pd.DataFrame = pd.DataFrame()
+        master_sql_df: pd.DataFrame = pd.DataFrame()
         try:
             for table_name in self._sqlite_table_names():
-                sql_df: pd.DataFrame = pd.read_sql_table(table_name, con=self.engine)
-                sql_df[self.HTML_CONTENT_FIELD] = sql_df[self.HTML_CONTENT_FIELD].apply(
+                sql_table_df: pd.DataFrame = pd.read_sql_table(table_name, con=self.engine)
+                sql_table_df[self.HTML_CONTENT_FIELD] = sql_table_df[self.HTML_CONTENT_FIELD].apply(
                     lambda html_string: BeautifulSoup(html_string, "html5lib")
                 )
-                master_df_list.append(sql_df)
+                master_sql_df = pd.concat([master_sql_df, sql_table_df])
         except (KeyError, OSError, ValueError) as e:
             raise e
-        if master_df_list:
-            reduced_df = reduce(lambda df1, df2: pd.concat([df1, df2]), master_df_list)
-        return reduced_df
+        return master_sql_df
 
     def load_sqlite_db_by_year(self, year: int) -> pd.DataFrame:
         """
@@ -253,3 +250,27 @@ class ProcessWikiXML:
         with open(filename, self.file_params) as file:
             xml_soup = BeautifulSoup(file, self.bsoup_params, from_encoding=self.from_encoding)
         return xml_soup
+
+
+class ProcessYAML:
+    """Class with methods for processing YAML files."""
+
+    def __init__(self, file_params: str = "r", file_encoding: str = "utf-8") -> None:
+        """
+        :param file_params: File IO parameters, defaults to "rb"
+        :param file_encoding: Encoding, defaults to "utf-8"
+        """
+        self.file_params: str = file_params
+        self.encoding: str = file_encoding
+
+    def load_yaml(self, filename: str) -> Dict[str, Any]:
+        """
+        Load and process a YAML file.
+
+        :param filename: YAML file
+        :return: Dictionary with YAML file content, empty if no content
+        """
+        yaml_content: Dict[str, Any] = {}
+        with open(filename, self.file_params, encoding=self.encoding) as file:
+            yaml_content = yaml.safe_load(file)
+        return yaml_content
