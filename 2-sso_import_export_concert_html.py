@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Combine individual 2018-2022 SSO concert HTML file content into a DataFrame and export to a local
+Combine individual SSO concert HTML file content into a DataFrame and export to a local
 SQLite database
 
 Prereq: HTML files have been downloaded to local disk
