@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Parse pre-fetched 2018-2022 SSO calendar files and output CSVs with concert URL "keys".
+Parse pre-fetched SSO calendar files and output CSVs with concert URL "keys".
 
 (keys = unique string identifiers that the SSO website assigns to each concert)
 
@@ -52,9 +52,15 @@ class CalendarJsonProcessor:
     Class for processing and merging SSO calendar JSON files for a specified year.
     """
 
-    def __init__(self, season_year: int, latest_year: int = common.LATEST_SSO_SEASON_YEAR) -> None:
+    def __init__(
+        self,
+        season_year: int,
+        expected_data_key: str,
+        latest_year: int = common.LATEST_SSO_SEASON_YEAR,
+    ) -> None:
         """
         :param season_year: Input season year
+        :param expected_data_key: Expected key for the concert data list in the calendar JSON
         :param latest_year: Latest SSO season (year)
         """
         try:
@@ -63,6 +69,7 @@ class CalendarJsonProcessor:
             logger.error(e)
             raise e
         self.season_year = season_year
+        self.expected_data_key = expected_data_key
 
     @staticmethod
     def load_calendar_json(json_file: str) -> Dict[str, Any]:
@@ -87,27 +94,46 @@ class CalendarJsonProcessor:
         :param json_content: Calendar JSON content
         :return: Filtered Calendar JSON content
         """
-        if "data" not in json_content:
-            error_msg: str = f"[{str(self.season_year)}] Calendar JSON is missing a 'data' key"
+        if self.expected_data_key not in json_content:
+            error_msg: str = (
+                f"[{str(self.season_year)}] Calendar JSON is missing a "
+                f"'{self.expected_data_key}' key"
+            )
             logger.error(error_msg)
             raise KeyError(error_msg)
-        json_content["data"] = [
-            concert
-            for concert in json_content["data"]
-            if str(self.season_year) in concert.get("concertSeason", "")
-        ]
+
+        # Concert JSON from <= 2023 *may* have data from more than one season,
+        # so we need to filter the JSON based on "concertSeason"
+        json_content[self.expected_data_key] = (
+            [
+                concert
+                for concert in json_content[self.expected_data_key]
+                if str(self.season_year) in concert.get("concertSeason", "")
+            ]
+            if self.season_year <= 2023
+            else [concert for concert in json_content[self.expected_data_key]]
+        )
         return json_content
 
-    def extract_unique_concert_urls(self, concert_list: List[Dict[str, Any]]) -> Set[str]:
+    def extract_unique_concert_urls(
+        self, concert_list: List[Dict[str, Any]]
+    ) -> Set[str]:
         """
         Extract unique list of concert URLs from JSON calendar.
 
         :param concert_list: List of concert items in the JSON calendar
         :return: Set of concert URLs
         """
-        concert_urls: Set[str] = set(
-            filter(lambda url: url, sorted(set(concert.get("url", "") for concert in concert_list)))
-        ) if concert_list else set()
+        concert_urls: Set[str] = (
+            set(
+                filter(
+                    lambda url: url,
+                    sorted(set(concert.get("url", "") for concert in concert_list)),
+                )
+            )
+            if concert_list
+            else set()
+        )
         return concert_urls
 
     def _concert_url_diff(self, old_json_urls: Set[str], new_json_urls: Set[str]):
@@ -121,7 +147,9 @@ class CalendarJsonProcessor:
         """
         return new_json_urls.difference(old_json_urls)
 
-    def merge_json_calendars(self, old_json_file: str, new_json_file: str) -> Dict[str, Any]:
+    def merge_json_calendars(
+        self, old_json_file: str, new_json_file: str
+    ) -> Dict[str, Any]:
         """
         Merge content from the old and new JSON calendars.
 
@@ -142,23 +170,25 @@ class CalendarJsonProcessor:
             new_json_content = self.filter_season_data(new_json_content)
 
         logger.info(
-            f"Old JSON: {len(old_json_content['data'])} concerts, "
-            f"New JSON: {len(new_json_content['data'])} concerts"
+            f"Old JSON: {len(old_json_content[self.expected_data_key])} concerts, "
+            f"New JSON: {len(new_json_content[self.expected_data_key])} concerts"
         )
 
         merged_json_content: Dict[str, Any] = old_json_content.copy()
 
         # extract URLs for concerts that are in new_json_content but not in old_json_content
         concert_url_diff: Set[str] = self._concert_url_diff(
-            self.extract_unique_concert_urls(old_json_content["data"]),
-            self.extract_unique_concert_urls(new_json_content["data"]),
+            self.extract_unique_concert_urls(old_json_content[self.expected_data_key]),
+            self.extract_unique_concert_urls(new_json_content[self.expected_data_key]),
         )
         # extract metadata for the new concert URLs
         new_concert_data: List[Dict[str, Any]] = [
-            concert for concert in new_json_content["data"] if concert["url"] in concert_url_diff
+            concert
+            for concert in new_json_content[self.expected_data_key]
+            if concert["url"] in concert_url_diff
         ]
         # merge new and old concert data
-        merged_json_content["data"].extend(new_concert_data)
+        merged_json_content[self.expected_data_key].extend(new_concert_data)
         # copy newest metadata to merged json
         merged_json_content["meta"] = new_json_content["meta"]
         return merged_json_content
@@ -181,11 +211,13 @@ class CalendarJsonProcessor:
 class SSOCalendar:
     """Methods for extracting unique concert identifiers from SSO season calendar files."""
 
-    def __init__(self, year: int) -> None:
+    def __init__(self, year: int, expected_data_key: str) -> None:
         """
         :param year: A year between 2018 and the year of the latest published season
+        :param expected_data_key: Expected key for the concert data list in the calendar JSON
         """
         self.year = year
+        self.expected_data_key = expected_data_key
 
     @property
     def html_calendar(self) -> List[CalendarRecord]:
@@ -224,7 +256,9 @@ class SSOCalendar:
             concerts = html_content.find_all(class_="reveal calendar-perf-modal")
 
         if not concerts:
-            logger.info(f"[{year_str}] Skipping {html_file} ... no concerts found to extract")
+            logger.info(
+                f"[{year_str}] Skipping {html_file} ... no concerts found to extract"
+            )
             return None
 
         # initialise calendar record with pre-filled year
@@ -232,7 +266,9 @@ class SSOCalendar:
 
         # add concert keys to the calendar_record.keys set
         for row in concerts:
-            key: str = row.find("a", attrs={"alt": "Read More"})["href"].strip().split("/")[-1]
+            key: str = (
+                row.find("a", attrs={"alt": "Read More"})["href"].strip().split("/")[-1]
+            )
             calendar_record.keys.add(key)
         return calendar_record
 
@@ -262,7 +298,9 @@ class SSOCalendar:
         for month in month_list:
             html_concert: Optional[CalendarRecord] = None
             try:
-                html_concert = self._parse_single_html_calendar_file(file_processor, month)
+                html_concert = self._parse_single_html_calendar_file(
+                    file_processor, month
+                )
             # fail entire process if a file fails to load or parse
             # (one month could have a large # of concerts)
             except OSError as os_error:
@@ -299,7 +337,9 @@ class SSOCalendar:
         logger.info(f"[{year_str}] loading {json_file}...")
 
         concerts: Dict[str, Any] = {}
-        calendar_processor = CalendarJsonProcessor(self.year)
+        calendar_processor = CalendarJsonProcessor(
+            season_year=self.year, expected_data_key=self.expected_data_key
+        )
         try:
             concerts = calendar_processor.filter_season_data(
                 calendar_processor.load_calendar_json(json_file)
@@ -308,20 +348,29 @@ class SSOCalendar:
             logger.error(f"[{year_str}] Calendar JSON failed to load: {os_error}")
             raise os_error
         except KeyError as key_error:
-            logger.error(f"[{year_str}] Calendar JSON is missing a 'data' key: {key_error}")
+            logger.error(
+                f"[{year_str}] Calendar JSON is missing a "
+                f"'{self.expected_data_key}' key: {key_error}"
+            )
             raise key_error
 
         # initialise calendar record with pre-filled year and no keys
         calendar_record: CalendarRecord = CalendarRecord(year=self.year, keys=set())
-        if not concerts.get("data", []):
-            logger.info(f"[{year_str}] Skipping {json_file} ... no concerts found to extract")
+        if not concerts.get(self.expected_data_key, []):
+            logger.info(
+                f"[{year_str}] Skipping {json_file} ... no concerts found to extract"
+            )
             return calendar_record
 
         # add concert keys to the calendar_record.keys set
-        concert_urls: Set[str] = calendar_processor.extract_unique_concert_urls(concerts["data"])
-        concert_keys: Set[str] = set(
-            url.split("/")[-1].strip() for url in concert_urls if url
-        ) if concert_urls else set()
+        concert_urls: Set[str] = calendar_processor.extract_unique_concert_urls(
+            concerts[self.expected_data_key]
+        )
+        concert_keys: Set[str] = (
+            set(url.split("/")[-1].strip() for url in concert_urls if url)
+            if concert_urls
+            else set()
+        )
         if concert_keys:
             calendar_record.keys = concert_keys
         return calendar_record
@@ -358,10 +407,15 @@ def _create_sso_calendar_key_df(calendar_obj: SSOCalendar) -> pd.DataFrame:
         if html_calendar:
             concert_list.extend(html_calendar)
 
-    calendar_df: pd.DataFrame = pd.DataFrame(concert_list) if concert_list else pd.DataFrame()
+    calendar_df: pd.DataFrame = (
+        pd.DataFrame(concert_list) if concert_list else pd.DataFrame()
+    )
     if not calendar_df.empty:
         calendar_df = (
-            calendar_df.explode("keys").drop_duplicates().dropna(how="any").reset_index(drop=True)
+            calendar_df.explode("keys")
+            .drop_duplicates()
+            .dropna(how="any")
+            .reset_index(drop=True)
         )
     return calendar_df
 
@@ -391,7 +445,8 @@ def _export_sso_calendar_key_df(calendar_df: pd.DataFrame, export_csv: str) -> N
     # rename existing CSV if it exists
     if os.path.exists(export_csv):
         old_file: str = (
-            os.path.splitext(export_csv)[0] + f".{datetime.strftime(datetime.now(), '%Y%m%d')}.csv"
+            os.path.splitext(export_csv)[0]
+            + f".{datetime.strftime(datetime.now(), '%Y%m%d')}.csv"
         )
         try:
             os.rename(export_csv, old_file)
@@ -467,11 +522,13 @@ def _get_cli_args() -> argparse.ArgumentParser:
         "--year",
         required=True,
         type=int,
-        choices=range(common.JSON_CALENDAR_START_YEAR, common.LATEST_SSO_SEASON_YEAR + 1, 1),
+        choices=range(
+            common.JSON_CALENDAR_START_YEAR, common.LATEST_SSO_SEASON_YEAR + 1, 1
+        ),
         help=" ".join(
             [
                 "SSO season calendar year between",
-                f"{common.JSON_CALENDAR_START_YEAR} and {common.LATEST_SSO_SEASON_YEAR}"
+                f"{common.JSON_CALENDAR_START_YEAR} and {common.LATEST_SSO_SEASON_YEAR}",
             ]
         ),
     )
@@ -485,26 +542,45 @@ def _get_cli_args() -> argparse.ArgumentParser:
 
 
 # %%
+def _expected_concert_data_key(year: int) -> str:
+    """
+    Return the calendar JSON's expected data key, based on the year.
+
+    Calendar JSON from <= 2023 has a 'data' key.
+    Calendar JSON from > 2023 apparently has a 'concerts' key.
+
+    :param year: Season year
+    :return: Expected data key for the calendar JSON
+    """
+    return "data" if year <= 2023 else "concerts"
+
+
+# %%
 def main():
     """."""
     # get CLI args
     args: argparse.Namespace = _get_cli_args().parse_args()
 
     if args.command == "update_calendar_json":
-        calendar_processor = CalendarJsonProcessor(args.year)
+        expected_data_key: str = _expected_concert_data_key(args.year)
+        calendar_processor = CalendarJsonProcessor(
+            season_year=args.year, expected_data_key=expected_data_key
+        )
         merged_json: Dict[str, Any] = calendar_processor.merge_json_calendars(
             os.path.join(str(args.year), args.old_json_file),
             os.path.join(str(args.year), args.new_json_file),
         )
         try:
-            export_json: str = os.path.join(str(args.year), f"sso-concerts-merged-{args.year}.json")
+            export_json: str = os.path.join(
+                str(args.year), f"sso-concerts-merged-{args.year}.json"
+            )
             calendar_processor.export_merged_json_calendar(merged_json, export_json)
         except OSError as e:
             logger.error(f"Error while saving the merged JSON calendar file: {e}")
             raise e
         logger.info(
             f"Successfully saved merged JSON calendar file: {os.path.abspath(export_json)} "
-            f"[{len(merged_json['data'])} concerts]"
+            f"[{len(merged_json[expected_data_key])} concerts]"
         )
 
     if args.command == "extract_concert_ids":
@@ -517,7 +593,9 @@ def main():
         # export concert keys for each requested SSO season to a separate CSV
         for year in args.input_years:
             # create dataframe with concert keys for the specified season (year)
-            calendar: SSOCalendar = SSOCalendar(year)
+            calendar: SSOCalendar = SSOCalendar(
+                year=year, expected_data_key=_expected_concert_data_key(year)
+            )
             year_str: str = str(year)
             logger.info(f"Processing calendar files for {year_str}:")
             calendar_df: pd.DataFrame = pd.DataFrame()
@@ -530,15 +608,21 @@ def main():
                 )
                 continue
             if calendar_df.empty:
-                logger.info(f"[{year}] Skipping year because calendar dataframe is empty...")
+                logger.info(
+                    f"[{year}] Skipping year because calendar dataframe is empty..."
+                )
                 continue
 
             # write season concert keys to disk
             try:
-                out_file: str = os.path.join(year_str, f"{args.csv_prefix}_{year_str}_keys.csv")
+                out_file: str = os.path.join(
+                    year_str, f"{args.csv_prefix}_{year_str}_keys.csv"
+                )
                 _export_sso_calendar_key_df(calendar_df, out_file)
             except OSError as e:
-                logger.error(f"[{year}] Error while trying to save concert key CSV: {e}")
+                logger.error(
+                    f"[{year}] Error while trying to save concert key CSV: {e}"
+                )
             else:
                 logger.info(
                     f"[{year}] Successfully saved CSV: "
