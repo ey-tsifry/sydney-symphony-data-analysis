@@ -7,7 +7,7 @@ from typing import List
 
 # earliest and latest years for which is there are full SSO season data sets
 EARLIEST_SSO_SEASON_YEAR: int = 2018
-LATEST_SSO_SEASON_YEAR: int = 2023
+LATEST_SSO_SEASON_YEAR: int = 2024
 
 # year when SSO season calendar data switched to JSON
 JSON_CALENDAR_START_YEAR: int = 2021
