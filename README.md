@@ -1,12 +1,38 @@
 # Composer diversity in Sydney Symphony Orchestra season programming: 2018-2021
 
 ## Table of Contents
-1. [Overview](#overview)
-2. [Background](#background)
-3. [2020 Disclaimer](#2020disclaimer)
-4. [Data](#data)
-5. [Results](#results)
-6. [Final thoughts](#finalthoughts)
+1. [[2023] Code Caveat - Under Construction!](#2023underconstruction)
+2. [Overview](#overview)
+3. [Background](#background)
+4. [2020 Disclaimer](#2020disclaimer)
+5. [Data](#data)
+6. [Results](#results)
+7. [Final thoughts](#finalthoughts)
+
+
+## [2023] CODE CAVEAT - UNDER CONSTRUCTION! <a name="2023underconstruction"></a>
+
+I wrote most of the code in this repo a few years ago under a time constraint for a course project. My focus at the time was on the immediate goal of aggregating, parsing and cleaning large amounts of semi-freeform and irregular data from different sources, on a deadline.
+
+As a result, parts of this code definitely do _not_ follow best practises vis-à-vis writing clean, simple and maintainable code. :)
+
+I've made a _few_ updates here and there since then, mostly so that I could process season data from 2021. However, the code does not yet parse or clean season data from 2022 onwards. Nor does it look pretty...
+
+That being said, here are some of the refactors that I eventually plan to do when I have time:
+- new/updated data models for concerts, compositions, artists, conductors, etc
+- refactor classes, add more abstractions and interfaces, etc
+  - extractor methods should live under `data_extractors/`
+  - cleaning methods should live under `data_cleaners/`
+- new/updated modules
+  - methods for querying and parsing Wikidata responses
+  - methods for parsing Wikpedia XML data (if there isn't already a better way to get structured Wikipedia data at this point)
+- move hard-coded data fixes into something better like YAML
+- add code to generate: composer name map, conductor nationality map, Wikidata country name map
+- update Jupyter notebook (for table generation and visualisations)
+- have a single CLI instead of multiple CLIs...
+- add tests? :)
+
+Meanwhile you can still read the original 2018-2021 data analysis below:
 
 ## OVERVIEW <a name="overview"></a>
 
