@@ -121,8 +121,8 @@ class ProcessPickle:
 class ProcessSQLite:
     """Class with methods for processing SQLite databases."""
 
-    HTML_CONTENT_FIELD: str = DBRecord.__fields__["html_content"].name
-    YEAR_FIELD: str = DBRecord.__fields__["year"].name
+    HTML_CONTENT_FIELD: str = "html_content"
+    YEAR_FIELD: str = "year"
 
     def __init__(self, db_name: str) -> None:
         """
