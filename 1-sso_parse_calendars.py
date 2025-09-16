@@ -546,13 +546,13 @@ def _expected_concert_data_key(year: int) -> str:
     """
     Return the calendar JSON's expected data key, based on the year.
 
-    Calendar JSON from <= 2023 has a 'data' key.
-    Calendar JSON from > 2023 apparently has a 'concerts' key.
+    Calendar JSON from <= 2023 and >=2026 (so far) has a 'data' key.
+    Calendar JSON from 2024-2025 apparently has a 'concerts' key.
 
     :param year: Season year
     :return: Expected data key for the calendar JSON
     """
-    return "data" if year <= 2023 else "concerts"
+    return "data" if (year <= 2023 or year >= 2026) else "concerts"
 
 
 # %%
