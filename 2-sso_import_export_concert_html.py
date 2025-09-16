@@ -108,7 +108,7 @@ def _create_concert_detail_df(concert_record_list: List[DBRecord]) -> pd.DataFra
     :return: Dataframe with concert HTML file content records
     """
     concert_df: pd.DataFrame = pd.DataFrame(
-        [concert.dict() for concert in concert_record_list]
+        [concert.model_dump() for concert in concert_record_list]
     ) if concert_record_list else pd.DataFrame()
     return concert_df
 
@@ -323,13 +323,13 @@ def main():
         raise e
 
     if concert_df.empty:
-        logger.warn(f"Concert HTML dataframe is empty. Not exporting anything")
+        logger.warning(f"Concert HTML dataframe is empty. Not exporting anything")
         return None
 
     # if dry_run=True, just output keys for the concert records that would have been exported
     if args.dry_run:
-        db_year: str = DBRecord.__fields__["year"].name
-        db_key: str = DBRecord.__fields__["key"].name
+        db_year: str = "year"
+        db_key: str = "key"
         year_key_pairs: List[str] = concert_df[[db_year, db_key]].apply(
             lambda row: f"{row[db_year]}|{row[db_key]}", axis=1
         ).to_list()
